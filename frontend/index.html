@@ -1,0 +1,52 @@
+<body>
+  <h1>Dashboard de Casos</h1>
+
+  <div class="filtros">
+    <label for="dataInicio">Período de:</label>
+    <input type="date" id="dataInicio" />
+    <label for="dataFim">até:</label>
+    <input type="date" id="dataFim" />
+  </div>
+
+  <div class="container">
+    <div class="grafico-box">
+      <h2>Gráfico de Casos por Tipo</h2>
+      <div id="graficoRosca"></div>
+    </div>
+    <div class="grafico-box">
+      <h2>Distribuição Etária das Vítimas</h2>
+      <div id="graficoDistribuicao"></div>
+    </div>
+  </div>
+
+  <div class="container">
+  <div class="grafico-box">
+    <h3>Fatores Determinantes nos Tipos de Caso</h3>
+    <div id="graficoModelo"></div>
+  </div>
+  <div class="grafico-box">
+    <h3>Acurácia do Modelo por Tipo de Caso</h3>
+    <div id="graficoAcuracia"></div> <!-- OK -->
+  </div>
+</div>
+
+<div class="container">
+  <div class="grafico-box">
+    <h3>Probabilidade do Tipo de Caso por Idade</h3>
+    <div id="graficoProbabilidadeIdade"></div> <!-- use este -->
+  </div>
+  <div class="grafico-box">
+    <h3>Correlação entre Variáveis</h3>
+    <div id="graficoCorrelacoes"></div> <!-- use este -->
+  </div>
+</div>
+    <div class="grafico-box">
+      <h3>Correlação entre Variáveis</h3>
+      <div id="graficoCorrelacoes"></div>
+    </div>
+  </div>
+
+  <!-- ✅ ADICIONE Chart.js ANTES do script.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="script.js"></script>
+</body>
