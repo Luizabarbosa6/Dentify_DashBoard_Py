@@ -214,52 +214,156 @@ def predizer():
         return jsonify({"erro": f"Erro ao fazer predição: {str(e)}"}), 500
 
 @app.route('/api/modelo/coefs', methods=['GET'])
-def coeficientes_modelo():
+def coeficientes_modelo_filtrado():
     try:
-        preprocessor = modelo.named_steps['preprocessor']
-        classifier = modelo.named_steps['classifier']
-        cat_encoder = preprocessor.named_transformers_['cat']
-        cat_features = cat_encoder.get_feature_names_out(preprocessor.transformers_[0][2])
-        numeric_features = preprocessor.transformers_[1][2]
-        all_features = list(cat_features) + list(numeric_features)
-        importancias = classifier.feature_importances_
-        features_importances = {feature: float(importance) for feature, importance in zip(all_features, importancias)}
-        return jsonify(features_importances), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        query = {}
 
+        sexo = request.args.get("sexo")
+        if sexo and sexo != "todos":
+            query["vitima.sexo"] = {"$regex": f"^{sexo}$", "$options": "i"}
+
+        etnia = request.args.get("etnia")
+        if etnia and etnia != "todos":
+            query["vitima.etnia"] = {"$regex": f"^{etnia}$", "$options": "i"}
+
+        idade_min = request.args.get("idadeMin", type=int)
+        idade_max = request.args.get("idadeMax", type=int)
+        if idade_min or idade_max:
+            idade_query = {}
+            if idade_min:
+                idade_query["$gte"] = idade_min
+            if idade_max:
+                idade_query["$lte"] = idade_max
+            query["vitima.idade"] = idade_query
+
+        data_inicio = request.args.get("dataInicio")
+        data_fim = request.args.get("dataFim")
+        if data_inicio or data_fim:
+            data_query = {}
+            if data_inicio:
+                data_query["$gte"] = data_inicio
+            if data_fim:
+                data_query["$lte"] = data_fim
+            query["data_do_caso"] = data_query
+
+        # Buscar os dados filtrados
+        dados = list(colecao.find(query, {"_id": 0}))
+        if not dados:
+            return jsonify({})
+
+        df = pd.DataFrame([{
+            "idade": d["vitima"]["idade"],
+            "etnia": d["vitima"]["etnia"],
+            "localizacao": d["localizacao"],
+            "tipo_do_caso": d["tipo_do_caso"]
+        } for d in dados]).dropna()
+
+        if df.shape[0] < 5:
+            return jsonify({"erro": "Poucos dados após filtragem"}), 400
+
+        X = df[["idade", "etnia", "localizacao"]]
+        y = label_encoder.transform(df["tipo_do_caso"])
+
+        from sklearn.pipeline import Pipeline
+        from sklearn.compose import ColumnTransformer
+        from sklearn.preprocessing import OneHotEncoder, StandardScaler
+        from sklearn.ensemble import RandomForestClassifier
+
+        numeric_features = ["idade"]
+        categorical_features = ["etnia", "localizacao"]
+
+        preprocessor = ColumnTransformer(transformers=[
+            ("num", StandardScaler(), numeric_features),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+        ])
+
+        modelo_temp = Pipeline(steps=[
+            ("preprocessor", preprocessor),
+            ("classifier", RandomForestClassifier(n_estimators=50, random_state=42))
+        ])
+
+        modelo_temp.fit(X, y)
+
+        cat_encoder = modelo_temp.named_steps['preprocessor'].named_transformers_['cat']
+        cat_names = cat_encoder.get_feature_names_out(categorical_features)
+        all_features = list(cat_names) + numeric_features
+
+        importancias = modelo_temp.named_steps['classifier'].feature_importances_
+        features_importances = {feat: float(imp) for feat, imp in zip(all_features, importancias)}
+
+        return jsonify(features_importances)
+
+    except Exception as e:
+        import traceback
+        print("❌ Erro:", traceback.format_exc())
+        return jsonify({"erro": str(e)}), 500
+    
 @app.route('/api/modelo/probabilidade-idade', methods=['GET'])
 def probabilidade_por_idade():
     try:
+        query = {}
+
         sexo = request.args.get("sexo")
+        if sexo and sexo != "todos":
+            query["vitima.sexo"] = {"$regex": f"^{sexo}$", "$options": "i"}
+
         etnia = request.args.get("etnia")
+        if etnia and etnia != "todos":
+            query["vitima.etnia"] = {"$regex": f"^{etnia}$", "$options": "i"}
+
         idade_min = request.args.get("idadeMin", type=int)
         idade_max = request.args.get("idadeMax", type=int)
+        if idade_min or idade_max:
+            idade_query = {}
+            if idade_min is not None:
+                idade_query["$gte"] = idade_min
+            if idade_max is not None:
+                idade_query["$lte"] = idade_max
+            query["vitima.idade"] = idade_query
+
         data_inicio = request.args.get("dataInicio")
         data_fim = request.args.get("dataFim")
+        if data_inicio or data_fim:
+            data_query = {}
+            if data_inicio:
+                data_query["$gte"] = data_inicio
+            if data_fim:
+                data_query["$lte"] = data_fim
+            query["data_do_caso"] = data_query
 
-        # Use esses filtros para ajustar as entradas simuladas
+        # Agora sim: buscar os documentos filtrados
+        dados = list(colecao.find(query, {"_id": 0}))
+        if not dados:
+            return jsonify([])
+
         faixas = [(0, 18), (19, 30), (31, 45), (46, 60), (61, 100)]
         resultados = []
-        localizacao_padrao = "Centro"
 
         for faixa in faixas:
-            idade_media = sum(faixa) // 2
-            entrada = {
-                "idade": idade_media,
-                "etnia": etnia if etnia and etnia != "todos" else random.choice(["Branca", "Preta", "Parda"]),
-                "localizacao": localizacao_padrao
-            }
+            # Filtrar dados dentro da faixa
+            docs_faixa = [
+                d for d in dados
+                if faixa[0] <= d.get("vitima", {}).get("idade", 0) <= faixa[1]
+            ]
 
-            df = pd.DataFrame([entrada])
-            probs = modelo.predict_proba(df)[0]
-            resultado = {
+            if not docs_faixa:
+                continue
+
+            entradas = pd.DataFrame([{
+                "idade": d["vitima"]["idade"],
+                "etnia": d["vitima"]["etnia"],
+                "localizacao": d["localizacao"]
+            } for d in docs_faixa])
+
+            probs_medias = modelo.predict_proba(entradas).mean(axis=0)
+
+            resultados.append({
                 "faixa": f"{faixa[0]}-{faixa[1]}",
                 "probabilidades": {
-                    classe: round(float(prob), 4) for classe, prob in zip(label_encoder.classes_, probs)
+                    classe: round(float(prob), 4)
+                    for classe, prob in zip(label_encoder.classes_, probs_medias)
                 }
-            }
-            resultados.append(resultado)
+            })
 
         return jsonify(resultados)
 
@@ -292,7 +396,7 @@ def obter_acuracia():
         # Filtro por sexo (caso exista no documento)
         sexo = request.args.get("sexo")
         if sexo and sexo != "todos":
-            query["vitima.sexo"] = sexo
+          query["vitima.sexo"] = {"$regex": f"^{sexo}$", "$options": "i"}
 
         etnia = request.args.get("etnia")
         if etnia and etnia != "todos":
@@ -358,11 +462,11 @@ def distribuicao_tipo_caso():
     # Filtros opcionais
     sexo = request.args.get("sexo")
     if sexo and sexo != "todos":
-        query["vitima.sexo"] = sexo
+     query["vitima.sexo"] = {"$regex": f"^{sexo}$", "$options": "i"}
 
     etnia = request.args.get("etnia")
     if etnia and etnia != "todos":
-        query["vitima.etnia"] = etnia
+     query["vitima.etnia"] = {"$regex": f"^{etnia}$", "$options": "i"}
 
     idade_query = {}
     idade_min = request.args.get("idadeMin")
